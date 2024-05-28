@@ -1,0 +1,166 @@
+const asyncHandler = require("express-async-handler");
+const Chat = require("../models/chatModels");
+const User = require("../models/userModel");
+
+const creatChat = asyncHandler(async(req,res)=>{
+
+    const {userId} =req.body;
+
+    if(!userId){
+        console.log("chat with this user not exist");
+        return res.status(400);
+    }
+    
+    var isChat = await Chat.find({
+        isGroupChat:false,
+        $and:[
+            {users:{ $elemMatch : {$eq : req.user._id}}},
+            {users:{ $elemMatch : {$eq: userId}}}
+        ]
+    }).populate("users","-password").populate("latestMessage");
+
+    isChat = await User.populate(isChat, {
+        path: "latestMessage.sender",
+        select: "name profilePic email",
+      });
+
+    if(isChat.length>0){
+        res.send(isChat[0]);
+    }
+    else{
+        var chatData={
+            chatName : "sender",
+            isGroupChat :false,
+            users:[req.user._id,userId]
+        };
+
+        try{
+            const createdChat = await Chat.create(chatData);
+            const FullChat = await Chat.findOne({_id:createdChat._id}).populate("users","-password");
+            res.status(200).json(FullChat);
+
+        }
+        catch(error){
+          res.status(400);
+          throw new Error(error.message);
+        }
+    }
+
+});
+
+
+const fetchChats = asyncHandler(async (req, res) => {
+    try {
+      Chat.find({ users: { $elemMatch: { $eq: req.user._id } } })
+        .populate("users", "-password")
+        .populate("isAdmin", "-password")
+        .populate("latestMessage")
+        .sort({ updatedAt: -1 })
+        .then(async (results) => {
+          results = await User.populate(results, {
+            path: "latestMessage.sender",
+            select: "name pic email",
+          });
+          res.status(200).send(results);
+        });
+    } catch (error) {
+      res.status(400);
+      throw new Error(error.message);
+    }
+  });
+
+  const createChatGroup = asyncHandler(async(req,res)=>{
+
+    if(!req.body.users || !req.body.chatName){
+        throw new Error("Please fill all the details");
+        return res.status(400);
+    }
+
+    var users=JSON.parse(req.body.users);
+
+    if(users.length<2){
+        throw new Error("More than two users require");
+        return res.status(400);
+    }
+
+    users.push(req.user) //current user who is logged in
+
+    try{
+        const groupChat = await Chat.create({
+            chatName:req.body.chatName,
+            users:users,
+            isGroupChat:true,
+            isAdmin:req.user
+        });
+    
+        const fullGroupChat=await Chat.findOne({_id:groupChat._id}).populate("users","-password").populate("isAdmin",-"password");
+        
+        res.status(200).json(fullGroupChat);
+          
+    }
+    catch(error){
+        res.status(400);
+        throw new Error(error.message);
+    }
+
+  });
+
+const renameGroup = asyncHandler(async(req,res)=>{
+
+     const {chatId,newGroupName} =req.body;
+
+     const updatedChatName = await Chat.findByIdAndUpdate(chatId,{chatName:newGroupName},{new:true})
+                             .populate("users","-password")
+                             .populate("isAdmin","-password")
+ 
+    
+
+    if(!updatedChatName){
+        res.status(404);
+        throw new Error("Chat not found");
+    }
+    else{
+        res.json(updatedChatName);
+    }
+
+
+});
+
+const addGroup= asyncHandler(async(req,res)=>{
+
+    const{chatId,userId} =req.body;
+
+    const added = await Chat.findByIdAndUpdate(chatId,{$push : {users:userId}},{new:true})
+                .populate("users","-password")
+                .populate("isAdmin","-password");
+   
+    if(!added){
+        res.status(404);
+        throw new Error("Chat not found");
+    }
+    else
+    {
+        res.send(added);
+    }
+});
+
+
+const removeFromGroup= asyncHandler(async(req,res)=>{
+
+    const{chatId,userId} =req.body;
+
+    const removed = await Chat.findByIdAndUpdate(chatId,{$pull : {users:userId}},{new:true})
+                .populate("users","-password")
+                .populate("isAdmin","-password");
+   
+    if(!removed){
+        res.status(404);
+        throw new Error("Chat not found");
+    }
+    else
+    {
+        res.send(removed);
+    }
+});
+
+module.exports = {creatChat,fetchChats,createChatGroup,renameGroup,addGroup,removeFromGroup};
